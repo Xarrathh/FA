@@ -17,7 +17,8 @@
 	$js = "<script language='JavaScript' type='text/javascript'>
 function defaultCompany()
 {
-	document.forms[0].company_login_name.options[".user_company()."].selected = true;
+	// [CUSTOM] default company is carried by the hidden company_login_name field;
+	// company selection is now a single search+select input (no <select> dropdown).
 }
 </script>";
 
@@ -114,11 +115,30 @@ function defaultCompany()
 				$coy = $def_coy;
 			if (isset($db_connections)) {
 				if (!@$SysPrefs->text_company_selection) {
-					echo "<tr><td>"._("Company")."</td><td><select name='company_login_name'>\n";
+					// [CUSTOM] single search+select company control (input + datalist),
+					// resolving to the company index in a hidden field.
+					echo "<tr><td>"._("Company")."</td><td>";
+					echo "<input type='text' id='company_search' list='company_list' autocomplete='off' "
+						."placeholder='"._("Type to search & select...")."' "
+						."style='width:100%' oninput='syncCompany()' onchange='syncCompany()' />";
+					echo "<datalist id='company_list'>\n";
 					for ($i = 0; $i < count($db_connections); $i++)
-						echo "<option value=$i ".($i==$coy ? 'selected':'') .">" . $db_connections[$i]["name"] . "</option>";
-					echo "</select>\n";
+						echo "<option value='".$db_connections[$i]["name"]."' data-idx='$i'>";
+					echo "</datalist>\n";
+					echo "<input type='hidden' name='company_login_name' id='company_login_name' value='".$coy."' />";
 					echo "</td></tr>";
+					echo "<script>
+					function syncCompany(){
+						var v = document.getElementById('company_search').value.toLowerCase();
+						var opts = document.getElementById('company_list').options;
+						for (var i=0;i<opts.length;i++){
+							if (opts[i].value.toLowerCase() === v){
+								document.getElementById('company_login_name').value = opts[i].getAttribute('data-idx');
+								return;
+							}
+						}
+					}
+					</script>";
 				} else {
 					text_row(_("Company"), "company_login_nickname", "", 20, 50);
 				}

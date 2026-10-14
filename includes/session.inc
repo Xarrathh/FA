@@ -11,7 +11,7 @@
 ***********************************************************************/
 define('VARLIB_PATH', $path_to_root.'/tmp');
 define('VARLOG_PATH', $path_to_root.'/tmp');
-define('SECURE_ONLY', true); // if you really need also http (unsecure) access allowed, you can set this to NULL
+define('SECURE_ONLY', false); // if you really need also http (unsecure) access allowed, you can set this to NULL
 
 class SessionManager
 {
@@ -555,7 +555,7 @@ if (!defined('FA_LOGOUT_PHP_FILE')){
 				$_SESSION["wa_current_user"]->login($_POST["company_login_name"],
 				$_POST["user_name_entry_field"], $_POST["password"]);
 			// select full vs fallback ui mode on login
-			$_SESSION["wa_current_user"]->ui_mode = $_POST['ui_mode'];
+			$_SESSION["wa_current_user"]->ui_mode = isset($_POST['ui_mode']) ? $_POST['ui_mode'] : 0;
 			if (!$succeed)
 			{
 			// Incorrect password
