@@ -415,6 +415,10 @@ if ($session !== null) {
 
 	echo "<center><label style='font-weight:bold;color:#a00;'><input type='checkbox' name='backup_confirm' value='1'> "
 		._("I confirm I have made a backup before importing")."</label></center>";
+	// shortcut for the user who has not made that backup yet
+	if (user_check_access('SA_BACKUP'))
+		echo "<center><span style='color:#666'>"._("Not backed up yet?")."</span> "
+			.viewer_link(_("Open the Backup window"), "admin/backups.php")."</center>";
 	echo "<center>".viewer_link(_("Create new GL account"), "gl/manage/gl_accounts.php")."</center><br>";
 
 	submit_center('import', _("Import to General Ledger"), true, false, 'nonajax');
