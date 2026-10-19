@@ -117,34 +117,56 @@ function defaultCompany()
 				if (!@$SysPrefs->text_company_selection) {
 					// [CUSTOM] single search+select company control (input + datalist),
 					// resolving to the company index in a hidden field.
-					$def_name = isset($db_connections[$coy]) ? $db_connections[$coy]["name"] : '';
+					// [CUSTOM] the company field starts EMPTY on every visit: no default
+					// company is pre-selected or pre-typed, so the operator always makes
+					// an explicit choice (the fleet has 135 companies and the previous
+					// company was easy to submit by accident).
+					$def_name = '';
 					echo "<tr><td>"._("Company")."</td><td>";
 					echo "<input type='text' id='company_search' list='company_list' autocomplete='off' "
-						."value='".$def_name."' "
+						."value='' "
 						."placeholder='"._("Type to search & select...")."' "
-						."style='width:100%' oninput='syncCompany()' onchange='syncCompany()' />";
+						."style='width:100%' oninput='syncCompany()' onchange='syncCompany(true)' />";
 					echo "<datalist id='company_list'>\n";
 					for ($i = 0; $i < count($db_connections); $i++)
 						echo "<option value='".$db_connections[$i]["name"]."' data-idx='$i'>";
 					echo "</datalist>\n";
-					echo "<input type='hidden' name='company_login_name' id='company_login_name' value='".$coy."' />";
+					echo "<input type='hidden' name='company_login_name' id='company_login_name' value='' />";
 					echo "</td></tr>";
 					echo "<script>
-					var company_def_idx = '".$coy."';
-					function syncCompany(){
+					function syncCompany(commit){
 						var el = document.getElementById('company_search');
 						var hid = document.getElementById('company_login_name');
 						if (!el || !hid) return true;
 						var v = el.value.replace(/^\\s+|\\s+$/g,'').toLowerCase();
-						if (v === '') { hid.value = company_def_idx; return true; }
 						var opts = document.getElementById('company_list').options;
-						for (var i=0;i<opts.length;i++){
+						// empty box = nothing selected (never silently fall back to
+						// a default company)
+						if (v === '') { hid.value = ''; return false; }
+						var i, hits = 0, hitidx = '', hitval = '';
+						for (i=0;i<opts.length;i++){
 							if (opts[i].value.toLowerCase() === v){
 								hid.value = opts[i].getAttribute('data-idx');
 								return true;
 							}
 						}
-						// no exact match: clear the index so a stale company is
+						// no exact match: accept an unambiguous partial (substring)
+						// match so typing a few letters is enough. The visible text is
+						// only rewritten to the full name on commit (blur/login), never
+						// on every keystroke, which would fight the typist.
+						for (i=0;i<opts.length;i++){
+							if (opts[i].value.toLowerCase().indexOf(v) !== -1){
+								hits++;
+								hitidx = opts[i].getAttribute('data-idx');
+								hitval = opts[i].value;
+							}
+						}
+						if (hits === 1) {
+							hid.value = hitidx;
+							if (commit) el.value = hitval;
+							return true;
+						}
+						// no (or ambiguous) match: clear the index so a stale company is
 						// never silently submitted instead of what was typed
 						hid.value = '';
 						return false;
@@ -152,7 +174,7 @@ function defaultCompany()
 					function checkCompany(){
 						var el = document.getElementById('company_search');
 						if (!el) return true;
-						if (syncCompany()) return true;
+						if (syncCompany(true)) return true;
 						alert('".addslashes(_("Please select a company from the list."))."');
 						el.focus();
 						return false;
