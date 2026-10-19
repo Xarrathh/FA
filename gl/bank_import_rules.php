@@ -18,13 +18,13 @@ include_once($path_to_root . "/gl/includes/db/bank_import_rules_db.inc");
 if (isset($_GET['export'])) {
 	header('Content-Type: text/csv; charset=utf-8');
 	header('Content-Disposition: attachment; filename="bank_import_rules.csv"');
-	echo "pattern,gl_account_code,gl_account_name,trans_type\n";
+	echo "pattern,gl_account_code,gl_account_name,trans_type,vat\n";
 	$exp = get_bank_import_rules(true);
 	while ($r = db_fetch($exp)) {
 		echo '"'.str_replace('"', '""', $r['pattern']).'",'
 			.'"'.$r['gl_account'].'",'
 			.'"'.str_replace('"', '""', $r['account_name']).'",'
-			.$r['trans_type']."\n";
+			.$r['trans_type'].','.(int)$r['vat']."\n";
 	}
 	exit;
 }
@@ -78,6 +78,7 @@ if (isset($_POST['_import']) && isset($_FILES['imp_rules']) && $_FILES['imp_rule
 			$gl = trim($data[1]);
 			$name = isset($data[2]) ? trim($data[2]) : '';
 			$trans_type = isset($data[3]) ? (int)trim($data[3]) : 0;
+			$vat = (isset($data[4]) && trim($data[4]) !== '') ? (int)trim($data[4]) : 0;
 			if ($pattern === '') { $skipped++; continue; }
 
 			$code = bank_import_resolve_account($gl);
@@ -88,7 +89,7 @@ if (isset($_POST['_import']) && isset($_FILES['imp_rules']) && $_FILES['imp_rule
 				$skipped++;
 				continue;
 			}
-			add_bank_import_rule($pattern, $code, $trans_type);
+			add_bank_import_rule($pattern, $code, $trans_type, $vat);
 			$added++;
 		}
 		fclose($fp);
@@ -105,6 +106,7 @@ if (isset($_POST['_add']) || isset($_POST['_update'])) {
 	$pattern = trim(get_post('pattern'));
 	$gl_account = trim(get_post('gl_account'));
 	$trans_type = (int)get_post('trans_type');
+	$vat = isset($_POST['vat']) ? 1 : 0;
 	$inactive = isset($_POST['inactive']) ? 1 : 0;
 
 	if ($pattern === '' || $gl_account === '') {
@@ -115,9 +117,9 @@ if (isset($_POST['_add']) || isset($_POST['_update'])) {
 			display_error(sprintf(_("GL account '%s' not found."), $gl_account));
 		} else {
 			if (isset($_POST['_add']))
-				add_bank_import_rule($pattern, $code, $trans_type);
+				add_bank_import_rule($pattern, $code, $trans_type, $vat);
 			else
-				update_bank_import_rule((int)get_post('id'), $pattern, $code, $trans_type, $inactive);
+				update_bank_import_rule((int)get_post('id'), $pattern, $code, $trans_type, $inactive, $vat);
 			display_notification(_("Rule saved."));
 		}
 	}
@@ -129,7 +131,7 @@ if (isset($_POST['_delete'])) {
 
 // edit pre-fill (GET selected_id — the "Edit" link is a GET)
 $selected_id = isset($_GET['selected_id']) ? (int)$_GET['selected_id'] : (int)get_post('selected_id', -1);
-$edit = array('id' => -1, 'pattern' => '', 'gl_account' => '', 'trans_type' => 0, 'inactive' => 0);
+$edit = array('id' => -1, 'pattern' => '', 'gl_account' => '', 'trans_type' => 0, 'vat' => 0, 'inactive' => 0);
 if ($selected_id > 0) {
 	$res = db_query("SELECT * FROM ".TB_PREF."bank_import_rules WHERE id=".db_escape($selected_id));
 	if (db_num_rows($res) > 0)
@@ -155,6 +157,7 @@ if ($selected_id > 0) {
 	text_row(_("Pattern"), 'pattern', $edit['pattern'], 30, 100);
 	echo "<tr><td class='label'>"._("GL Account")."</td><td><input name='gl_account' list='gl_acc_list' value='".$edit['gl_account']."'></td></tr>";
 	bank_import_type_select('trans_type', $edit['trans_type']);
+	check_row(_("VAT inclusive (split net + VAT)"), 'vat', $edit['vat']);
 	check_row(_("Inactive"), 'inactive', $edit['inactive']);
 	submit_center_first('_update', _("Update"), _("Update this rule"), false);
 	echo "<a href='".htmlspecialchars($_SERVER['PHP_SELF'])."'>"._("Cancel")."</a></center>";
@@ -162,6 +165,7 @@ if ($selected_id > 0) {
 	text_row(_("Pattern"), 'pattern', '', 30, 100);
 	echo "<tr><td class='label'>"._("GL Account")."</td><td><input name='gl_account' list='gl_acc_list' placeholder='"._("type account code or name")."'></td></tr>";
 	bank_import_type_select('trans_type', 0);
+	check_row(_("VAT inclusive (split net + VAT)"), 'vat', 0);
 	submit_center('_add', _("Add Rule"), true, false, false);
 }
 end_table(1);
@@ -183,7 +187,7 @@ end_form();
 //  List of existing rules
 // ---------------------------------------------------------------------------
 start_table(TABLESTYLE);
-$th = array(_("Pattern"), _("GL Account"), _("Type"), _("Status"), "", "");
+$th = array(_("Pattern"), _("GL Account"), _("Type"), _("VAT"), _("Status"), "", "");
 table_header($th);
 $rules = get_bank_import_rules(true);
 $k = 0;
@@ -192,6 +196,7 @@ while ($r = db_fetch($rules)) {
 	label_cell($r['pattern']);
 	label_cell($r['gl_account'].' - '.$r['account_name']);
 	label_cell($r['trans_type'] == 1 ? _("Payment") : ($r['trans_type'] == 2 ? _("Deposit") : _("Both")));
+	label_cell(!empty($r['vat']) ? _("Yes") : _("No"));
 	label_cell($r['inactive'] ? "<span style='color:red'>"._("Inactive")."</span>" : _("Active"));
 	echo "<td><a href='".htmlspecialchars($_SERVER['PHP_SELF'])."?selected_id=".$r['id']."'>"._("Edit")."</a></td>";
 	echo "<td><form method='post' style='display:inline'>"

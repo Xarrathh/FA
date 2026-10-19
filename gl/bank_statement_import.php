@@ -235,13 +235,17 @@ if (isset($_POST['parse']) && isset($_FILES['imp']) && $_FILES['imp']['tmp_name'
 				} else
 					$errs[] = sprintf(_("Invalid amount: '%s' / '%s'"), $raw_debit, $raw_credit);
 
-				// auto-allocation (only for valid rows)
+				// auto-allocation (only for valid rows): the matched rule also
+				// carries whether this payee's amounts are VAT-inclusive
 				$gl_account = null;
+				$row_vat = 0;
 				if (empty($errs) && $amount !== null) {
 					$type_hint = ($amount < 0) ? 1 : 2; // 1=payment, 2=deposit
 					$rule = bank_import_find_rule($desc, $type_hint);
-					if ($rule !== null)
+					if ($rule !== null) {
 						$gl_account = $rule['gl_account'];
+						$row_vat = !empty($rule['vat']) ? 1 : 0;
+					}
 				}
 
 				$parsed[] = array(
@@ -251,7 +255,7 @@ if (isset($_POST['parse']) && isset($_FILES['imp']) && $_FILES['imp']['tmp_name'
 					'amount' => $amount,
 					'ref' => '',
 					'gl_account' => $gl_account,
-					'vat' => 0,
+					'vat' => $row_vat,
 					'errors' => $errs,
 				);
 			}

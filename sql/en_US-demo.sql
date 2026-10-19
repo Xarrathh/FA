@@ -146,6 +146,7 @@ CREATE TABLE `0_bank_import_rules` (
   `pattern` varchar(100) NOT NULL DEFAULT '',
   `gl_account` int(11) NOT NULL DEFAULT '0',
   `trans_type` tinyint(4) NOT NULL DEFAULT '0',
+  `vat` tinyint(4) NOT NULL DEFAULT '0',
   `inactive` tinyint(4) NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
   KEY `pattern` (`pattern`)
