@@ -85,6 +85,16 @@ function update_bank_import_rule($id, $pattern, $gl_account, $trans_type, $inact
 	db_query($sql, _("Cannot update bank import rule"));
 }
 
+// Does a rule with this pattern already exist (case-insensitive)? Used so that
+// importing a rules CSV twice cannot create duplicate rules.
+function bank_import_rule_exists($pattern)
+{
+	bank_import_ensure_rules_table();
+	$res = db_query("SELECT id FROM ".TB_PREF."bank_import_rules
+		WHERE LOWER(pattern)=LOWER(".db_escape($pattern).") LIMIT 1");
+	return db_num_rows($res) > 0;
+}
+
 function delete_bank_import_rule($id)
 {
 	db_query("DELETE FROM ".TB_PREF."bank_import_rules WHERE id=".db_escape($id),

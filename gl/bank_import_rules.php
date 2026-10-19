@@ -70,7 +70,7 @@ if (isset($_POST['_import']) && isset($_FILES['imp_rules']) && $_FILES['imp_rule
 	if (!$fp) {
 		display_error(_("Cannot read the rules file."));
 	} else {
-		$added = 0; $skipped = 0; $warn = ''; $first = true;
+		$added = 0; $skipped = 0; $dup = 0; $warn = ''; $first = true;
 		while (($data = fgetcsv($fp, 0, ',')) !== false) {
 			if ($first) { $first = false; continue; } // skip header row
 			if (count($data) < 3) continue;
@@ -81,6 +81,11 @@ if (isset($_POST['_import']) && isset($_FILES['imp_rules']) && $_FILES['imp_rule
 			$vat = (isset($data[4]) && trim($data[4]) !== '') ? (int)trim($data[4]) : 0;
 			if ($pattern === '') { $skipped++; continue; }
 
+			if (bank_import_rule_exists($pattern)) {
+				// re-importing the same CSV must not duplicate rules
+				$dup++;
+				continue;
+			}
 			$code = bank_import_resolve_account($gl);
 			if ($code === null && $name !== '')
 				$code = bank_import_resolve_account($name);
@@ -93,7 +98,8 @@ if (isset($_POST['_import']) && isset($_FILES['imp_rules']) && $_FILES['imp_rule
 			$added++;
 		}
 		fclose($fp);
-		display_notification(sprintf(_("%d rule(s) imported, %d skipped."), $added, $skipped));
+		display_notification(sprintf(_("%d rule(s) imported, %d skipped, %d already existed."),
+			$added, $skipped, $dup));
 		if ($warn !== '')
 			display_error($warn);
 	}
@@ -115,6 +121,8 @@ if (isset($_POST['_add']) || isset($_POST['_update'])) {
 		$code = bank_import_resolve_account($gl_account);
 		if ($code === null) {
 			display_error(sprintf(_("GL account '%s' not found."), $gl_account));
+		} elseif (isset($_POST['_add']) && bank_import_rule_exists($pattern)) {
+			display_error(sprintf(_("A rule for '%s' already exists - edit it instead."), $pattern));
 		} else {
 			if (isset($_POST['_add']))
 				add_bank_import_rule($pattern, $code, $trans_type, $vat);
