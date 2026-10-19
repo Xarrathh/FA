@@ -117,8 +117,10 @@ function defaultCompany()
 				if (!@$SysPrefs->text_company_selection) {
 					// [CUSTOM] single search+select company control (input + datalist),
 					// resolving to the company index in a hidden field.
+					$def_name = isset($db_connections[$coy]) ? $db_connections[$coy]["name"] : '';
 					echo "<tr><td>"._("Company")."</td><td>";
 					echo "<input type='text' id='company_search' list='company_list' autocomplete='off' "
+						."value='".$def_name."' "
 						."placeholder='"._("Type to search & select...")."' "
 						."style='width:100%' oninput='syncCompany()' onchange='syncCompany()' />";
 					echo "<datalist id='company_list'>\n";
@@ -128,15 +130,32 @@ function defaultCompany()
 					echo "<input type='hidden' name='company_login_name' id='company_login_name' value='".$coy."' />";
 					echo "</td></tr>";
 					echo "<script>
+					var company_def_idx = '".$coy."';
 					function syncCompany(){
-						var v = document.getElementById('company_search').value.toLowerCase();
+						var el = document.getElementById('company_search');
+						var hid = document.getElementById('company_login_name');
+						if (!el || !hid) return true;
+						var v = el.value.replace(/^\\s+|\\s+$/g,'').toLowerCase();
+						if (v === '') { hid.value = company_def_idx; return true; }
 						var opts = document.getElementById('company_list').options;
 						for (var i=0;i<opts.length;i++){
 							if (opts[i].value.toLowerCase() === v){
-								document.getElementById('company_login_name').value = opts[i].getAttribute('data-idx');
-								return;
+								hid.value = opts[i].getAttribute('data-idx');
+								return true;
 							}
 						}
+						// no exact match: clear the index so a stale company is
+						// never silently submitted instead of what was typed
+						hid.value = '';
+						return false;
+					}
+					function checkCompany(){
+						var el = document.getElementById('company_search');
+						if (!el) return true;
+						if (syncCompany()) return true;
+						alert('".addslashes(_("Please select a company from the list."))."');
+						el.focus();
+						return false;
 					}
 					</script>";
 				} else {
@@ -154,8 +173,11 @@ function defaultCompany()
 	end_table(1);
 	echo "<input type='hidden' id=ui_mode name='ui_mode' value='".!fallback_mode()."' >\n";
 	if ($allow) {
+		$onclick = in_ajax() ? 'retry();' : 'set_fullmode();';
+		// validate the company search control before the form is submitted
+		$onclick = 'if(typeof checkCompany==="function" && !checkCompany()) return false; '.$onclick;
 		echo "<center><input type='submit' value='&nbsp;&nbsp;"._("Login -->")."&nbsp;&nbsp;' name='SubmitUser'"
-			." onclick='".(in_ajax() ? 'retry();': 'set_fullmode();')."'".(isset($blocked) ? " disabled" : '')." ></center>\n";
+			." onclick='$onclick'".(isset($blocked) ? " disabled" : '')." ></center>\n";
 	}		
 	foreach($_SESSION['timeout']['post'] as $p => $val) {
 		// add all request variables to be resend together with login data

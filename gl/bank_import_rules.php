@@ -157,8 +157,7 @@ if ($selected_id > 0) {
 	bank_import_type_select('trans_type', $edit['trans_type']);
 	check_row(_("Inactive"), 'inactive', $edit['inactive']);
 	submit_center_first('_update', _("Update"), _("Update this rule"), false);
-	echo "&nbsp;<a href='".htmlspecialchars($_SERVER['PHP_SELF'])."'>"._("Cancel")."</a>";
-	submit_center_last('_update', _("Update"), _("Update this rule"), false);
+	echo "<a href='".htmlspecialchars($_SERVER['PHP_SELF'])."'>"._("Cancel")."</a></center>";
 } else {
 	text_row(_("Pattern"), 'pattern', '', 30, 100);
 	echo "<tr><td class='label'>"._("GL Account")."</td><td><input name='gl_account' list='gl_acc_list' placeholder='"._("type account code or name")."'></td></tr>";

@@ -99,6 +99,20 @@ INSERT INTO `0_bank_accounts` VALUES
 ('1060', '0', 'Current account', 'N/A', 'N/A', NULL, 'USD', '1', '1', '5690', '0000-00-00 00:00:00', '0', '0'),
 ('1065', '3', 'Petty Cash account', 'N/A', 'N/A', NULL, 'USD', '0', '2', '5690', '0000-00-00 00:00:00', '0', '0');
 
+-- Structure of table `0_bank_import_rules` --
+
+DROP TABLE IF EXISTS `0_bank_import_rules`;
+
+CREATE TABLE `0_bank_import_rules` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `pattern` varchar(100) NOT NULL DEFAULT '',
+  `gl_account` int(11) NOT NULL DEFAULT '0',
+  `trans_type` tinyint(4) NOT NULL DEFAULT '0',
+  `inactive` tinyint(4) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `pattern` (`pattern`)
+) ENGINE=InnoDB ;
+
 -- Structure of table `0_bank_trans` --
 
 DROP TABLE IF EXISTS `0_bank_trans`;

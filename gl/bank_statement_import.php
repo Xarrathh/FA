@@ -53,11 +53,18 @@ function bank_import_post_one($bank_act, $date, $ref, $amount, $gl_account, $mem
 	add_bank_trans($type, $trans_no, $bank_act, $ref, $display_date, $amount, 0, '');
 	add_gl_trans($type, $trans_no, $display_date, $bank_gl_account, 0, 0, $memo, $amount);
 
+	$vat_account = '';
+	$vat_rate = 0.0;
 	if ($vat) {
 		$vi = bank_import_vat_info();
-		$net = $amount / (1 + $vi['rate']);
-		$vat_amount = $amount - $net;
 		$vat_account = ($amount < 0) ? $vi['purchasing_account'] : $vi['sales_account'];
+		$vat_rate = $vi['rate'];
+	}
+
+	if ($vat_account !== '' && $vat_rate > 0) {
+		// offset is VAT-inclusive: split into net + VAT (sum = -amount)
+		$net = $amount / (1 + $vat_rate);
+		$vat_amount = $amount - $net;
 		add_gl_trans($type, $trans_no, $display_date, $gl_account, 0, 0, $memo, -$net);
 		add_gl_trans($type, $trans_no, $display_date, $vat_account, 0, 0, $memo, -$vat_amount);
 	} else {
@@ -68,10 +75,12 @@ function bank_import_post_one($bank_act, $date, $ref, $amount, $gl_account, $mem
 }
 
 // Read the default (first active) tax type: rate + VAT GL accounts.
+// No tax type configured means VAT splitting is unavailable — never fall back
+// to a hard-coded rate, it would post wrong figures silently.
 function bank_import_vat_info()
 {
 	$res = db_query("SELECT rate, sales_gl_code, purchasing_gl_code FROM ".TB_PREF."tax_types
-		WHERE inactive=0 ORDER BY id LIMIT 1");
+		WHERE inactive=0 AND rate > 0 ORDER BY id LIMIT 1");
 	if (db_num_rows($res) > 0) {
 		$row = db_fetch($res);
 		return array(
@@ -80,7 +89,7 @@ function bank_import_vat_info()
 			'purchasing_account' => $row['purchasing_gl_code'],
 		);
 	}
-	return array('rate' => 0.14, 'sales_account' => '2150', 'purchasing_account' => '2150');
+	return array('rate' => 0.0, 'sales_account' => '', 'purchasing_account' => '');
 }
 
 // ---------------------------------------------------------------------------
@@ -100,42 +109,59 @@ $session = isset($_SESSION['bank_import']) ? $_SESSION['bank_import'] : null;
 $post_result = null;
 if (isset($_POST['import']) && $session !== null) {
 	if (!isset($_POST['backup_confirm'])) {
-		// Blocked: must confirm backup first. Keep the session (preview) so the
-		// user can tick the box and retry without re-parsing.
+		// Blocked: must confirm backup first. Keep the session (preview) AND the
+		// allocations already typed, so ticking the box and retrying does not
+		// throw away a whole statement's manual review.
+		if (isset($_POST['alloc']) && is_array($_POST['alloc'])) {
+			$vat_map = (isset($_POST['vat']) && is_array($_POST['vat'])) ? $_POST['vat'] : array();
+			foreach ($_POST['alloc'] as $i => $v) {
+				if (!isset($session['trans'][$i]))
+					continue;
+				$session['trans'][$i]['gl_account'] = trim($v);
+				$session['trans'][$i]['vat'] = isset($vat_map[$i]) ? 1 : 0;
+			}
+			$_SESSION['bank_import'] = $session;
+		}
 		$post_result = array('ok' => 0, 'fail' => 0, 'error' => '', 'rows' => array(),
 			'blocked' => _("You must confirm you have made a backup before importing."));
 	} else {
 	$bank_act = $session['bank_account'];
 	$ok = 0; $fail = 0; $post_error = ''; $post_rows = array();
 	foreach ($session['trans'] as $i => $t) {
-		if (!empty($t['errors']))
-			continue; // never post rows that failed validation
+		if (!empty($t['errors'])) {
+			// rows that failed validation are never posted, but they ARE
+			// reported so the summary totals account for every line
+			$fail++;
+			$reason = implode('; ', $t['errors']);
+			$post_rows[] = array('line' => $t['line'], 'desc' => $t['desc'], 'status' => 'fail', 'reason' => $reason);
+			continue;
+		}
 		$gl = isset($_POST["alloc"][$i]) ? trim($_POST["alloc"][$i]) : '';
-		if ($gl === '' || $gl === null) {
+		if ($gl === '') {
 			$fail++;
 			$reason = sprintf(_("no GL account selected for '%s' (%s)"), $t['desc'], price_format($t['amount']));
 			$post_error .= sprintf(_("Line %d: %s. "), $t['line'], $reason);
 			$post_rows[] = array('line' => $t['line'], 'desc' => $t['desc'], 'status' => 'fail', 'reason' => $reason);
 			continue;
 		}
-		if (!is_numeric($gl)) {
-			// resolve account name (or "code - name" text) back to a numeric code
-			// db_escape() returns the value already single-quoted + escaped.
-			$esc = db_escape($gl);
-			$res = db_query("SELECT account_code FROM ".TB_PREF."chart_master
-				WHERE inactive=0 AND (account_code=$esc OR account_name=$esc
-				OR CONCAT(account_code,' - ',account_name)=$esc) LIMIT 1");
-			if (db_num_rows($res) > 0) {
-				$row = db_fetch($res);
-				$gl = $row['account_code'];
-			} else {
-				$fail++;
-				$reason = sprintf(_("account '%s' not found"), $gl);
-				$post_error .= sprintf(_("Line %d: %s. "), $t['line'], $reason);
-				$post_rows[] = array('line' => $t['line'], 'desc' => $t['desc'], 'status' => 'fail', 'reason' => $reason);
-				continue;
-			}
+		// Resolve a code (numeric or typed name / "code - name") to a real,
+		// active chart account. db_escape() returns the value already
+		// single-quoted + escaped. Rule-supplied codes go through this too, so
+		// a rule pointing at a deleted account fails loudly instead of posting.
+		$esc = db_escape($gl);
+		$res = db_query("SELECT account_code FROM ".TB_PREF."chart_master
+			WHERE inactive=0 AND (account_code=$esc OR account_name=$esc
+			OR CONCAT(account_code,' - ',account_name)=$esc) LIMIT 1");
+		if (db_num_rows($res) == 0) {
+			$fail++;
+			$reason = sprintf(_("account '%s' not found"), $gl);
+			$post_error .= sprintf(_("Line %d: %s. "), $t['line'], $reason);
+			$post_rows[] = array('line' => $t['line'], 'desc' => $t['desc'], 'status' => 'fail', 'reason' => $reason);
+			continue;
 		}
+		$row = db_fetch($res);
+		$gl = $row['account_code'];
+
 		$memo = $t['desc'];
 		if ($t['ref'] !== '')
 			$memo .= ' ['.$t['ref'].']';
@@ -170,63 +196,44 @@ if (isset($_POST['parse']) && isset($_FILES['imp']) && $_FILES['imp']['tmp_name'
 			$parse_error = _("File is empty.");
 		} else {
 			// Fixed statement format: Date, Description, Debit, Credit.
-			// Row 0 is the header and is skipped.
-			$mapping = array('date'=>0, 'desc'=>1, 'debit'=>2, 'credit'=>3,
-				'amount'=>null, 'ref'=>null, 'balance'=>null);
-
+			// Row 0 is the header and is skipped; debit (col 2) is money out,
+			// credit (col 3) is money in, so amount = credit - debit.
 			$parsed = array();
 			for ($r = 1; $r < count($rows); $r++) {
 				$row = $rows[$r];
+				if (count($row) == 1 && trim((string)$row[0]) === '')
+					continue; // blank trailing line
 				$errs = array();
 
-				// date
-				$d = null;
-				if ($mapping['date'] !== null && isset($row[$mapping['date']]))
-					$d = bank_import_date($row[$mapping['date']]);
-				else
-					$errs[] = _("No date column mapped");
+				// date (col 0)
+				$raw_date = isset($row[0]) ? $row[0] : '';
+				$d = bank_import_date($raw_date);
 				if ($d === null)
-					$errs[] = sprintf(_("Invalid date: '%s'"), isset($row[$mapping['date']]) ? $row[$mapping['date']] : '');
-				elseif (db_num_rows(db_query("SELECT id FROM ".TB_PREF."fiscal_year WHERE closed=0 AND begin <= '$d' AND end >= '$d'")) == 0)
-					$errs[] = _("Date is outside the fiscal year - create the new fiscal year first (Setup > Fiscal Years)");
+					$errs[] = sprintf(_("Invalid date: '%s'"), $raw_date);
+				elseif (!is_date_in_fiscalyear($d, true))
+					$errs[] = _("Date is outside the fiscal year or in a closed period - create the fiscal year first (Setup > Fiscal Years)");
 
-				// description
-				$desc = $mapping['desc'] !== null && isset($row[$mapping['desc']]) ? trim($row[$mapping['desc']]) : '';
+				// description (col 1)
+				$desc = isset($row[1]) ? trim($row[1]) : '';
 				if ($desc === '')
 					$errs[] = _("Missing description");
 
-				// amount
-				$amount = null; $debit = null; $credit = null; $raw_amt = '';
-				if ($mapping['debit'] !== null && isset($row[$mapping['debit']])) {
-					$debit = bank_import_amount($row[$mapping['debit']]);
-					$raw_amt = $row[$mapping['debit']];
-				}
-				if ($mapping['credit'] !== null && isset($row[$mapping['credit']])) {
-					$credit = bank_import_amount($row[$mapping['credit']]);
-					$raw_amt = $row[$mapping['credit']];
-				}
+				// amounts (cols 2/3)
+				$raw_debit = isset($row[2]) ? $row[2] : '';
+				$raw_credit = isset($row[3]) ? $row[3] : '';
+				$debit = bank_import_amount($raw_debit);
+				$credit = bank_import_amount($raw_credit);
+				$amount = null;
 				if ($debit !== null || $credit !== null) {
 					$debit = $debit === null ? 0.0 : $debit;
 					$credit = $credit === null ? 0.0 : $credit;
-					if ($debit > 0 && $credit > 0)
+					if ($debit != 0.0 && $credit != 0.0)
 						$errs[] = _("Both debit and credit present on one line");
 					$amount = $credit - $debit;
-				} elseif ($mapping['amount'] !== null && isset($row[$mapping['amount']])) {
-					$raw_amt = $row[$mapping['amount']];
-					$amount = bank_import_amount($raw_amt);
-				} else {
-					$errs[] = _("No debit/credit or amount column mapped");
-				}
-				if ($amount === null)
-					$errs[] = sprintf(_("Invalid amount: '%s'"), $raw_amt);
-				elseif ($amount == 0.0)
-					$errs[] = _("Zero amount");
-
-				// reference / balance (optional)
-				$ref = $mapping['ref'] !== null && isset($row[$mapping['ref']]) ? trim($row[$mapping['ref']]) : '';
-				$balance = null;
-				if ($mapping['balance'] !== null && isset($row[$mapping['balance']]))
-					$balance = bank_import_amount($row[$mapping['balance']]);
+					if ($amount == 0.0)
+						$errs[] = _("Zero amount");
+				} else
+					$errs[] = sprintf(_("Invalid amount: '%s' / '%s'"), $raw_debit, $raw_credit);
 
 				// auto-allocation (only for valid rows)
 				$gl_account = null;
@@ -242,11 +249,9 @@ if (isset($_POST['parse']) && isset($_FILES['imp']) && $_FILES['imp']['tmp_name'
 					'date' => $d,
 					'desc' => $desc,
 					'amount' => $amount,
-					'debit' => $debit,
-					'credit' => $credit,
-					'ref' => $ref,
-					'balance' => $balance,
+					'ref' => '',
 					'gl_account' => $gl_account,
+					'vat' => 0,
 					'errors' => $errs,
 				);
 			}
@@ -358,6 +363,9 @@ if ($session !== null) {
 		echo "<option value='$code'>".htmlspecialchars($name)."</option>";
 	echo "</datalist>";
 
+	$vi = bank_import_vat_info();
+	$vat_available = ($vi['rate'] > 0 && $vi['sales_account'] !== '' && $vi['purchasing_account'] !== '');
+
 	div_start('preview');
 	start_table(TABLESTYLE, "width='95%'");
 	$th = array(_("Line"), _("Date"), _("Description"), _("Amount"), _("GL Account"), _("VAT"), _("Errors"));
@@ -371,11 +379,16 @@ if ($session !== null) {
 		amount_cell($p['amount']);
 		if (empty($p['errors'])) {
 			$val = ($p['gl_account'] !== null) ? $p['gl_account'] : '';
-			echo "<td><input name='alloc[$i]' list='gl_acc_list' value='".htmlspecialchars($val)."' size='28' placeholder='"._("account code or name")."'></td>";
-			echo "<td style='text-align:center'><input type='checkbox' name='vat[$i]' value='1'></td>";
-			label_cell($p['gl_account'] !== null
-				? "<span style='color:green'>auto</span>"
-				: "<span style='color:orange'>manual</span>");
+			$tag = ($val === '')
+				? "<br><span style='color:orange'>"._("manual")."</span>"
+				: "<br><span style='color:green'>"._("auto")."</span>";
+			echo "<td><input name='alloc[$i]' list='gl_acc_list' value='".htmlspecialchars($val)."' size='28' placeholder='"._("account code or name")."'>".$tag."</td>";
+			if ($vat_available)
+				echo "<td style='text-align:center'><input type='checkbox' name='vat[$i]' value='1'"
+					.(!empty($p['vat']) ? " checked" : "")."></td>";
+			else
+				label_cell(_("n/a"));
+			label_cell("&nbsp;");
 		} else {
 			label_cell("&nbsp;");
 			label_cell("&nbsp;");
@@ -393,6 +406,8 @@ if ($session !== null) {
 	if ($unalloc > 0) {
 		display_note(sprintf(_("%d valid transaction(s) have no GL account. Select one (or define a rule) before importing."), $unalloc));
 	}
+	if (!$vat_available)
+		display_note(_("VAT splitting is unavailable: no active tax type with a GL account is configured (Setup > Taxes)."));
 
 	echo "<center><label style='font-weight:bold;color:#a00;'><input type='checkbox' name='backup_confirm' value='1'> "
 		._("I confirm I have made a backup before importing")."</label></center>";
