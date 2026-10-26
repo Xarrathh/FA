@@ -110,6 +110,18 @@ function get_bank_trans_for_bank_account($bank_account, $from, $to)
 
 //----------------------------------------------------------------------------------------
 
+function get_bank_trans_date_range($bank_account)
+{
+	$sql = "SELECT MIN(trans_date) first_date, MAX(trans_date) last_date
+		FROM ".TB_PREF."bank_trans
+		WHERE bank_act=".db_escape($bank_account);
+	$result = db_query($sql, "could not retrieve the bank transaction date range");
+
+	return db_fetch($result);
+}
+
+//----------------------------------------------------------------------------------------
+
 function get_balance_before_for_bank_account($bank_account, $from)
 {
 	$from = date2sql($from);
