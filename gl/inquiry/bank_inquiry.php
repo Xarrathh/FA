@@ -151,6 +151,16 @@ if (isset($_GET['bank_account']))
 	$_POST['bank_account'] = $_GET['bank_account'];
 
 start_form();
+
+// One shared datalist for the GL account filter (type-as-you-type, same control
+// the bank import / allocation rules pages use).
+echo "<datalist id='gl_acc_list'>";
+$gl_res = get_gl_accounts();
+while ($gl_row = db_fetch($gl_res))
+	echo "<option value='".htmlspecialchars($gl_row['account_code'])."'>"
+		.htmlspecialchars($gl_row['account_code']." - ".$gl_row['account_name'])."</option>";
+echo "</datalist>";
+
 start_table(TABLESTYLE_NOBORDER);
 start_row();
 if (!$page_nested)
@@ -158,9 +168,21 @@ if (!$page_nested)
 
 date_cells(_("From:"), 'TransAfterDate', '', null, -user_transaction_days());
 date_cells(_("To:"), 'TransToDate');
+end_row();
 
+start_row();
 text_cells(_("Search:"), 'search', null, 30, 60, _('Amount, description, reference or payee. Prefix an amount with &gt; or &lt; to search a value range.'));
 check_cells(_("All dates:"), 'search_all_dates', null, false, _('Ignore the From/To dates while searching'));
+
+// GL account filter: restrict the list to transactions that were coded to one
+// account (the counter/offset account of the bank transaction). Type a code, a
+// name, or pick from the list; an empty box means every account.
+echo "<td>"._("GL Account:")."</td><td>";
+echo "<input name='gl_account' list='gl_acc_list' size='22' maxlength='60'"
+	." style='max-width:180px' placeholder='"._('All accounts')."'"
+	." value='".htmlspecialchars(trim(html_entity_decode(get_post('gl_account', ''), ENT_QUOTES, 'UTF-8')))."'"
+	." title='"._('Only show the transactions posted to this GL account')."'>";
+echo "</td>\n";
 
 submit_cells('Show',_("Show"),'', '', 'default');
 end_row();
@@ -177,6 +199,28 @@ $to_date = get_post('TransToDate', '');
 $search = trim(html_entity_decode(get_post('search', ''), ENT_QUOTES, 'UTF-8'));
 $terms = bank_inquiry_parse_terms($search);
 
+// Resolve a typed code / name / "code - name" to a real chart account. Inactive
+// accounts are allowed here: the inquiry is read-only and history on a retired
+// account is exactly what people come looking for.
+$gl_typed = trim(html_entity_decode(get_post('gl_account', ''), ENT_QUOTES, 'UTF-8'));
+$gl_filter = '';
+$gl_info = null;
+if ($gl_typed !== '')
+{
+	$gl_esc = db_escape($gl_typed);
+	$gl_q = db_query("SELECT account_code, account_name FROM ".TB_PREF."chart_master
+		WHERE account_code=$gl_esc OR account_name=$gl_esc
+			OR CONCAT(account_code,' - ',account_name)=$gl_esc LIMIT 1");
+	if (db_num_rows($gl_q))
+	{
+		$gl_info = db_fetch($gl_q);
+		$gl_filter = $gl_info['account_code'];
+	}
+	else
+		display_error(sprintf(_("GL account '%s' was not found - showing all accounts."),
+			htmlspecialchars($gl_typed)));
+}
+
 // "All dates" widens the range to the account's whole history; the running
 // balance stays truthful because the opening balance is taken from before the
 // first transaction shown.
@@ -191,6 +235,11 @@ if (check_value('search_all_dates'))
 }
 
 $result = get_bank_trans_for_bank_account($_POST['bank_account'], $from_date, $to_date);	
+
+// Transactions coded to the selected GL account (empty array = no filter).
+$gl_keys = $gl_filter !== ''
+	? get_bank_trans_gl_account_keys($gl_filter, $from_date, $to_date)
+	: array();
 
 div_start('trans_tbl');
 if (!$page_nested)
@@ -240,6 +289,10 @@ while ($myrow = db_fetch($result))
  	else 
  		$credit += $myrow["amount"];
 
+	// GL account filter: only rows coded to the selected account
+	if ($gl_filter !== '' && !isset($gl_keys[$myrow["type"].":".$myrow["trans_no"]]))
+		continue;
+
 	// free text search: match the text of the row, or the amount itself
 	if (count($terms))
 	{
@@ -284,7 +337,7 @@ while ($myrow = db_fetch($result))
 }
 //end of while loop
 
-if (count($terms))
+if (count($terms) || $gl_filter !== '')
 {
 	if ($rows_matched == 0)
 	{
@@ -297,8 +350,14 @@ if (count($terms))
 	}
 	else
 	{
+		$filter_parts = array();
+		if (count($terms))
+			$filter_parts[] = "'".htmlspecialchars($search)."'";
+		if ($gl_filter !== '')
+			$filter_parts[] = _("GL account")." ".htmlspecialchars($gl_info['account_code']." - ".$gl_info['account_name']);
+
 		start_row("class='inquirybg' style='font-weight:bold'");
-		label_cell(sprintf(_("%d of %d transaction(s) match '%s'"), $rows_matched, $rows_in_range, htmlspecialchars($search)), "colspan=4");
+		label_cell(sprintf(_("%d of %d transaction(s) match %s"), $rows_matched, $rows_in_range, implode(" + ", $filter_parts)), "colspan=4");
 		amount_cell($matched_debit);
 		amount_cell($matched_credit);
 		label_cell("");
